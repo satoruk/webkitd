@@ -11,6 +11,12 @@ from PyQt4.QtWebKit import *
 from PyQt4.QtNetwork import *
 
 
+import sys
+import codecs
+
+sys.stdin  = codecs.getreader('utf-8')(sys.stdin)
+sys.stdout = codecs.getwriter('utf-8')(sys.stdout)
+
 class WebKitServer(QTcpServer):
 
 
@@ -73,7 +79,11 @@ class WebKitServer(QTcpServer):
 
   @classmethod
   def daemon(cls, op='start', host=u'127.0.0.1', port=1982, pidPath=u'/tmp/webkitd.pid', stdout=u'/tmp/webkitd.out', stderr=u'/tmp/webkitd.err'):
-    from daemon.pidlockfile import PIDLockFile
+    # daemon.pidlockfileが無かったらlockfile.pidlockfileを使う様に
+    try:
+      from daemon.pidlockfile import PIDLockFile
+    except:
+      from lockfile.pidlockfile import PIDLockFile
 
     pidFile = PIDLockFile(pidPath)
 
@@ -561,6 +571,28 @@ class WebKitServerJob():
       if (self.data[u'command'] == u'disconnect'):
         self.worker.finish({ u'message': 'bye-bye' })
         self.worker.disconnect()
+      elif (self.data[u'command'] == u'proxy-on'):
+        proxy = QNetworkProxy()
+        proxy.setType(QNetworkProxy.DefaultProxy)
+        proxy.setHostName(self.data[u'hostname'])
+        proxy.setPort(int(self.data[u'port'], 10))
+      	self.page.networkAccessManager().setProxy(proxy)
+      	self.worker.finish({ u'proxy': 'set proxy-on' })
+      elif (self.data[u'command'] == u'proxy-off'):
+        proxy = QNetworkProxy()
+        proxy.setType(QNetworkProxy.NoProxy)
+        self.page.networkAccessManager().setProxy(proxy)
+        self.worker.finish({ u'proxy': 'set proxy-off' })
+      elif (self.data[u'command'] == u'to-plain-text'):
+        value = unicode(self.page.mainFrame().toPlainText())
+        print value
+        sys.stdout.flush()
+        self.worker.finish({ u'to-plain-text': 'to-plain-text' })
+      elif (self.data[u'command'] == u'to-html'):
+        value = unicode(self.page.mainFrame().toHtml())
+        print value
+        sys.stdout.flush()
+        self.worker.finish({ u'to-html': 'to-html' })
       elif (self.data[u'command'] == u'status'):
         
         objectCount = WebKitServer.getObjectCount(self.worker.app)
@@ -609,6 +641,9 @@ class WebKitPage(QWebPage):
     for k, v in settings.items():
       self.settings().setAttribute(k, v)
 
+    # proxy対応（システム設定）
+    ##QNetworkProxyFactory.setUseSystemConfiguration(True)
+    
     self.loadProgress.connect(self.handleLoadProgress)
     self.loadStarted.connect(self.handleLoadStarted)
     self.loadFinished.connect(self.handleLoadFinished)
@@ -617,7 +652,10 @@ class WebKitPage(QWebPage):
     self.mainFrame().javaScriptWindowObjectCleared.connect(self.handleJavaScriptWindowObjectCleared)
     self.mainFrame().urlChanged.connect(self.handleUrlChanged)
     self.mainFrame().titleChanged.connect(self.handleTitleChanged)
-    self.mainFrame().pageChanged.connect(self.handlePageChanged)
+    # self.mainFrame().pageChanged.connect(self.handlePageChanged)
+    # qt 4:4.7.0-0ubuntu4.3 (or python-qt4) does not have PageChange signal
+    if hasattr(self.mainFrame(), 'pageChanged'):
+      self.mainFrame().pageChanged.connect(self.handlePageChanged)
 
     self.setViewportSize(QSize(400, 300))
 
@@ -773,7 +811,7 @@ class WebKitPage(QWebPage):
     timeouted = False
     error = False
     try:
-      (found, count) = self.js(js, [attr, value], timeout)
+      (found, count) = self.js(js, [xpath, attr, value], timeout)
     except WebKitJavaScriptTimeoutException, e:
       timeouted = True
       error = traceback.format_exception_only(type(e), e)
@@ -797,7 +835,7 @@ class WebKitPage(QWebPage):
     timeouted = False
     error = False
     try:
-      (found, count) = self.js(js, [prop, value], timeout)
+      (found, count) = self.js(js, [xpath, prop, value], timeout)
     except WebKitJavaScriptTimeoutException, e:
       timeouted = True
       error = traceback.format_exception_only(type(e), e)
@@ -822,7 +860,7 @@ class WebKitPage(QWebPage):
     error = False
     resultList = []
     try:
-      (found, count, resultList) = self.js(js, [prop, args], timeout)
+      (found, count, resultList) = self.js(js, [xpath, prop, args], timeout)
     except WebKitJavaScriptTimeoutException, e:
       timeouted = True
       error = traceback.format_exception_only(type(e), e)
@@ -1112,19 +1150,19 @@ class WebKitPage(QWebPage):
     return u''
 
 
-  def javascriptAlert(self, frame, msg):
+  def javaScriptAlert(self, frame, msg):
     pass
 
 
-  def javascriptPrompt(self, frame, msg):
+  def javaScriptPrompt(self, frame, msg):
     return True
 
 
-  def javascriptConfirm(self, frame, msg):
+  def javaScriptConfirm(self, frame, msg):
     return True
 
 
-  def javascriptConsoleMessage(self, msg, lineNumber, sourceId):
+  def javaScriptConsoleMessage(self, msg, lineNumber, sourceId):
     pass
 
 
@@ -1181,11 +1219,16 @@ if __name__ == "__main__":
   startparser.add_argument(u'--stdout', default='/tmp/webkitd.out')
   startparser.add_argument(u'--stderr', default='/tmp/webkitd.err')
   stopparser = subparsers.add_parser('stop', help='Stop server')
+  stopparser.add_argument(u'--host', default='127.0.0.1')
+  stopparser.add_argument(u'--port', type=int, default=1982)
+  stopparser.add_argument(u'--pidfile', default='/tmp/webkitd.pid')
+  stopparser.add_argument(u'--stdout', default='/tmp/webkitd.out')
+  stopparser.add_argument(u'--stderr', default='/tmp/webkitd.err')
 
   args = parser.parse_args()
 
   if sys.argv[1] == 'start':
     WebKitServer.daemon(sys.argv[1], args.host, args.port, args.pidfile, args.stdout, args.stderr)
   else:
-    WebKitServer.daemon(sys.argv[1])
+    WebKitServer.daemon(sys.argv[1], args.host, args.port, args.pidfile, args.stdout, args.stderr)
 
