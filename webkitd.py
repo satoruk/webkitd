@@ -576,8 +576,8 @@ class WebKitServerJob():
         proxy.setType(QNetworkProxy.DefaultProxy)
         proxy.setHostName(self.data[u'hostname'])
         proxy.setPort(int(self.data[u'port'], 10))
-      	self.page.networkAccessManager().setProxy(proxy)
-      	self.worker.finish({ u'proxy': 'set proxy-on' })
+        self.page.networkAccessManager().setProxy(proxy)
+        self.worker.finish({ u'proxy': 'set proxy-on' })
       elif (self.data[u'command'] == u'proxy-off'):
         proxy = QNetworkProxy()
         proxy.setType(QNetworkProxy.NoProxy)
@@ -617,6 +617,60 @@ class WebKitServerJob():
       self.worker.error(e)
 
 
+#
+# proxy on
+# { "type": "preference", "data": { "name" : "proxy", "value" : { "host" : "", "port" : 8080 } } }
+#
+# proxy off
+# { "type": "preference", "data": { "name" : "proxy", "value" : { } } }
+#
+# user agent
+# { "type": "preference", "data": { "name" : "userAgent", "value" : "" } }
+#
+class WebKitPreferenceJob():
+
+
+  id = u'preference'
+
+
+  def __init__(self, worker, page, data):
+    self.worker = worker
+    self.page = page
+    self.data = data
+
+
+  def start(self):
+    try:
+      propName = self.data[u'name']
+      propValue = self.data[u'value']
+      if (propName == u'userAgent'):
+        self.setUserAgent(propValue)
+        self.worker.finish({ propName : True })
+      elif (propName == u'proxy'):
+        self.setProxy(propValue)
+        self.worker.finish({ propName : True })
+      else:
+        self.worker.finish({ u'error': u'property not found' })
+    except Exception, e:
+      traceback.print_exc();
+      self.worker.error(e)
+
+
+  def setUserAgent(self, value):
+    self.page.userAgent = value
+
+
+  def setProxy(self, value):
+    proxy = QNetworkProxy()
+    if value.has_key(u'host'):
+      proxy.setType(QNetworkProxy.DefaultProxy)
+      proxy.setHostName(value[u'host'])
+      proxy.setPort(int(value[u'port'], 10))
+    else:
+      proxy.setType(QNetworkProxy.NoProxy)
+    self.page.networkAccessManager().setProxy(proxy)
+
+
 
 class WebKitPage(QWebPage):
 
@@ -624,6 +678,8 @@ class WebKitPage(QWebPage):
 
   def __init__(self, parent):
     QWebPage.__init__(self, parent)
+
+    self.userAgent = None
 
     self.timer = QTimer()
     self.timer.isUsed = False
@@ -1167,8 +1223,9 @@ class WebKitPage(QWebPage):
 
 
   def userAgentForUrl(self, url):
-    return u'Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/534.30 (KHTML, like Gecko) Chrome/12.0.742.112 Safari/534.30'
-
+    if self.userAgent == None :
+      return super(self.__class__, self).userAgentForUrl(url)
+    return self.userAgent
 
   def supportsExtension(self, extension):
     return extension == QWebPage.ErrorPageExtension
@@ -1197,6 +1254,7 @@ WebKitServer.Page = WebKitPage
 
 WebKitWorker.appendJobClass(WebKitLoadUrlJob)
 WebKitWorker.appendJobClass(WebKitServerJob)
+WebKitWorker.appendJobClass(WebKitPreferenceJob)
 WebKitWorker.appendJobClass(WebKitClickElementJob)
 WebKitWorker.appendJobClass(WebKitCheckElementJob)
 WebKitWorker.appendJobClass(WebKitWaitElementJob)
