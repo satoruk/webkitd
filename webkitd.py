@@ -61,13 +61,12 @@ class WebKitServer(QTcpServer):
     signal.signal(signal.SIGINT, signal.SIG_DFL)
 
 
-
   @classmethod
   def start(cls, host='127.0.0.1', port=1982):
-    signal.signal(signal.SIGINT, signal.SIG_DFL)
-
     cls.init()
     app = QApplication([])
+    app.setApplicationName(QString(u'WebKitServer'))
+    app.setApplicationVersion(QString(u'0.0.1'))
     cls.app = app
     server = cls(app)
 
@@ -1276,6 +1275,7 @@ if __name__ == "__main__":
   startparser.add_argument(u'--pidfile', default='/tmp/webkitd.pid')
   startparser.add_argument(u'--stdout', default='/tmp/webkitd.out')
   startparser.add_argument(u'--stderr', default='/tmp/webkitd.err')
+  startparser.add_argument(u'foreground')
   stopparser = subparsers.add_parser('stop', help='Stop server')
   stopparser.add_argument(u'--host', default='127.0.0.1')
   stopparser.add_argument(u'--port', type=int, default=1982)
@@ -1286,7 +1286,10 @@ if __name__ == "__main__":
   args = parser.parse_args()
 
   if sys.argv[1] == 'start':
-    WebKitServer.daemon(sys.argv[1], args.host, args.port, args.pidfile, args.stdout, args.stderr)
+    if args.foreground == 'foreground':
+      WebKitServer.start(args.host, args.port)
+    else:
+      WebKitServer.daemon(sys.argv[1], args.host, args.port, args.pidfile, args.stdout, args.stderr)
   else:
     WebKitServer.daemon(sys.argv[1], args.host, args.port, args.pidfile, args.stdout, args.stderr)
 
