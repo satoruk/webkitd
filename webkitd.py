@@ -3,7 +3,7 @@
 from __future__ import with_statement
 
 from pprint import pprint as p
-import signal, json, sys, os, re, traceback, uuid, json, time, errno
+import signal, json, sys, os, re, traceback, uuid, json, time, errno, logging, codecs
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
@@ -11,11 +11,24 @@ from PyQt4.QtWebKit import *
 from PyQt4.QtNetwork import *
 
 
-import sys
-import codecs
-
 sys.stdin  = codecs.getreader('utf-8')(sys.stdin)
 sys.stdout = codecs.getwriter('utf-8')(sys.stdout)
+
+logger = logging.getLogger('webkitd')
+logger.setLevel(logging.DEBUG)
+
+conerr = logging.StreamHandler(sys.stderr)
+conerr.setLevel(logging.WARNING)
+conerr_formatter = logging.Formatter('%(levelname)s %(message)s')
+conerr.setFormatter(conerr_formatter)
+logger.addHandler(conerr)
+
+console = logging.StreamHandler(sys.stdout)
+console.setLevel(logging.DEBUG)
+console_formatter = logging.Formatter('%(asctime)s pid:%(process)d tid:%(thread)d [%(levelname)s] %(message)s at %(module)s line:%(lineno)d')
+console.setFormatter(console_formatter)
+logger.addHandler(console)
+
 
 class WebKitServer(QTcpServer):
 
@@ -129,6 +142,7 @@ class WebKitServer(QTcpServer):
 
 
   def __init__(self, app):
+    self.logger = logging.getLogger('webkitd.WebKitServer')
     self.app = app
     QTcpServer.__init__(self, app)
     self.newConnection.connect(self.handleNewConnection)
@@ -137,10 +151,11 @@ class WebKitServer(QTcpServer):
   def handleNewConnection(self):
     while self.hasPendingConnections():
       socket = self.nextPendingConnection()
-
       if socket == None:
         return
 
+      self.logger.info('new connection.')
+ 
       socket.disconnected.connect(socket.deleteLater)
 
       worker = self.__class__.Worker(socket, self.app, self.__class__.Page)
@@ -153,7 +168,8 @@ class WebKitWorker(QObject):
 
 
   def __init__(self, socket, app, Page):
-    print u'New worker created: ' + unicode(socket.peerAddress().toString()) + u':' + unicode(socket.peerPort())
+    self.logger = logging.getLogger('webkitd.WebKitWorker')
+    self.logger.info(u'New worker created: {0} : {1}'.format(unicode(socket.peerAddress().toString()), unicode(socket.peerPort())))
     QObject.__init__(self, app)
     self.app = app
     self.Page = Page
@@ -175,13 +191,13 @@ class WebKitWorker(QObject):
 
 
   def handleReadyRead(self):
-    print u'Handle Ready Read'
+    self.logger.info(u'Handle Ready Read')
     while self.socket and self.socket.canReadLine():
       # For UTF-8 Text Protocol
       # QByteArray -> Python String -> Python Unicode
       line = self.socket.readLine();
       data = str(line).decode(u'UTF-8').strip()
-      print u'Data arrived: ' + data
+      self.logger.debug(u'Data arrived: ' + data)
       self.emitData(data)
 
 
@@ -240,7 +256,7 @@ class WebKitWorker(QObject):
 
 
   def disconnect(self):
-    print u'Worker destroyed.'
+    self.logger.info(u'Worker destroyed.')
     self.socket.disconnectFromHost()
     self.socket.readyRead.disconnect(self.handleReadyRead)
     self.page.settings().clearMemoryCaches()
@@ -261,6 +277,7 @@ class WebKitLoadUrlJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitLoadUrlJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -294,6 +311,7 @@ class WebKitCheckElementJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitCheckElementJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -373,6 +391,7 @@ class WebKitScrollElementJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitScrollElementJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -412,6 +431,7 @@ class WebKitGetElementValueJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitGetElementValueJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -452,6 +472,7 @@ class WebKitSetElementAttrJob(WebKitCheckElementJob):
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitSetElementAttrJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -475,6 +496,7 @@ class WebKitSetElementPropJob(WebKitCheckElementJob):
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitSetElementPropJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -498,6 +520,7 @@ class WebKitCallElementMethodJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitCallElementMethodJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -530,6 +553,7 @@ class WebKitEvalStringJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitEvalStringJob')
     self.worker = worker
     self.page = page;
     self.timeout = data[u'timeout']
@@ -560,6 +584,7 @@ class WebKitServerJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitServerJob')
     self.data = data
     self.worker = worker
     self.page = page;
@@ -586,12 +611,12 @@ class WebKitServerJob():
         value = unicode(self.page.mainFrame().toPlainText())
         print value
         sys.stdout.flush()
-        self.worker.finish({ u'to-plain-text': 'to-plain-text' })
+        self.worker.finish({ u'to-plain-text': 'to-plain-text', u'value': value })
       elif (self.data[u'command'] == u'to-html'):
         value = unicode(self.page.mainFrame().toHtml())
         print value
         sys.stdout.flush()
-        self.worker.finish({ u'to-html': 'to-html' })
+        self.worker.finish({ u'to-html': 'to-html', u'value': value })
       elif (self.data[u'command'] == u'status'):
         
         objectCount = WebKitServer.getObjectCount(self.worker.app)
@@ -633,6 +658,7 @@ class WebKitPreferenceJob():
 
 
   def __init__(self, worker, page, data):
+    self.logger = logging.getLogger('webkitd.WebKitPreferenceJob')
     self.worker = worker
     self.page = page
     self.data = data
@@ -676,6 +702,7 @@ class WebKitPage(QWebPage):
   javascriptInterrupted = pyqtSignal()
 
   def __init__(self, parent):
+    self.logger = logging.getLogger('webkitd.WebKitPage')
     QWebPage.__init__(self, parent)
 
     self.userAgent = None
@@ -728,53 +755,54 @@ class WebKitPage(QWebPage):
 
 
   def handleInitialLayoutCompleted(self):
-    print u'Handle initial layout completed.'
+    self.logger.info(u'Handle initial layout completed.')
 
 
   def handleInitialLayoutCompleted(self):
-    print u'Handle initial layout completed.'
+    self.logger.info(u'Handle initial layout completed.')
 
 
   def handleJavaScriptWindowObjectCleared(self):
-    print u'JavaScript window object cleared.'
+    self.logger.info(u'JavaScript window object cleared.')
 
- 
+
   def handleTitleChanged(self, title):
-    print u'Title changed: ' + unicode(title)
+    self.logger.info(u'Title changed: ' + unicode(title))
 
 
   def handleUrlChanged(self, url):
-    print u'Url changed: ' + url.toString()
+    self.logger.info(u'Url changed: ' + unicode(url.toString()))
 
 
   def handlePageChanged(self):
-    print u'Page changed.'
+    self.logger.info(u'Page changed.')
 
-  
+
   def handleLoadProgress(self, progress):
-    print u'Loading... ' + str(progress) + u'%'
+    self.logger.info(u'Loading... ' + str(progress) + u'%')
 
 
   def handleLoadStarted(self):
-    print u'Load started.'
+    self.logger.info(u'Load started.')
 
 
   def handleLoadFinished(self, ok):
-    print u'Load finished.'
+    self.logger.info(u'Load finished.')
 
 
   def handleResourceLoadFinished(self, reply):
-    print u'Resource loaded: ' + unicode(reply.url().toString())
+    self.logger.info(u'Resource loaded: ' + unicode(reply.url().toString()))
 
 
   def timeout(self, time, callback):
-    print u'Waiting: ' + unicode(time) + u' sec'
+    self.logger.info(u'Waiting: ' + unicode(time) + u' sec')
     if (self.timer.isUsed):
       raise Exception(u'Timer is used')
     self.timer.isUsed = True
     self.timer.start(time * 1000)
 
     def handleTimeout():
+      self.logger.info(u'Load timeout.')
       self.timer.stop()
       self.timer.timeout.disconnect(handleTimeout)
       self.timer.isUsed = False
@@ -789,7 +817,7 @@ class WebKitPage(QWebPage):
 
 
   def navigate(self, url, timeout, callback):
-    print u"Preparing to load...: " + url
+    self.logger.info(u"Preparing to load...: " + url)
 
     context = {
       u'status': 0,
@@ -829,7 +857,7 @@ class WebKitPage(QWebPage):
 
 
   def click(self, xpath, timeout, callback):
-    print u'Preparing to click...: ' + xpath
+    self.logger.info(u'Preparing to click...: ' + xpath)
     js = '''
       function(xpath) {
         var elList = __xpath__(xpath);
@@ -853,7 +881,7 @@ class WebKitPage(QWebPage):
 
 
   def setElementAttribute(self, xpath, attr, value, timeout, callback):
-    print u'Preparing to set element attribute...: ' + xpath + u' (' + attr + u')'
+    self.logger.info(u'Preparing to set element attribute...: ' + xpath + u' (' + attr + u')')
     js = '''
       function(xpath, attr, value) {
         var elList = __xpath__(xpath);
@@ -877,7 +905,7 @@ class WebKitPage(QWebPage):
 
 
   def setElementProperty(self, xpath, prop, value, timeout, callback):
-    print u'Preparing to set element property...: ' + xpath + u' (' + prop + u')'
+    self.logger.info(u'Preparing to set element property...: ' + xpath + u' (' + prop + u')')
     js = '''
       function(xpath, prop, value) {
         var elList = __xpath__(xpath);
@@ -901,7 +929,7 @@ class WebKitPage(QWebPage):
 
 
   def callElementMethod(self, xpath, prop, args, timeout, callback):
-    print u'Preparing to call element method...: ' + xpath + u' (' + prop + u')'
+    self.logger.info(u'Preparing to call element method...: ' + xpath + u' (' + prop + u')')
     js = '''
       function(xpath, prop, args) {
         var elList = __xpath__(xpath);
@@ -926,7 +954,7 @@ class WebKitPage(QWebPage):
 
 
   def evalString(self, code, timeout, callback):
-    print u'Preparing to evaluate string...: (' + code + u')'
+    self.logger.info(u'Preparing to evaluate string...: (' + code + u')')
     js = '''
       function(code) {
         return eval(code)
@@ -947,7 +975,7 @@ class WebKitPage(QWebPage):
 
 
   def getElementValue(self, xpath, attr, timeout, callback):
-    print u'Preparing to get element value...: ' + xpath + u' (' + attr + u')'
+    self.logger.info(u'Preparing to get element value...: ' + xpath + u' (' + attr + u')')
     js = '''
       function(xpath, attr) {
         var elList = __xpath__(xpath);
@@ -987,7 +1015,7 @@ class WebKitPage(QWebPage):
 
 
   def scrollElement(self, xpath, scroll, timeout, callback):
-    print u'Preparing to scroll...: ' + xpath + u' (' + unicode(scroll) + u')'
+    self.logger.info(u'Preparing to scroll...: ' + xpath + u' (' + unicode(scroll) + u')')
     js = '''
       function(xpath, scroll) {
         var elList = __xpath__(xpath);
@@ -1023,7 +1051,7 @@ class WebKitPage(QWebPage):
 
 
   def checkElement(self, xpath, timeout, callback):
-    print u'Preparing to check...: ' + xpath
+    self.logger.info(u'Preparing to check...: ' + xpath)
     js = '''
       function(xpath) {
         var elList = __xpath__(xpath);
@@ -1048,7 +1076,7 @@ class WebKitPage(QWebPage):
   def js(self, js, args, timeout):
     timer = QTimer()
     def handleTimeout():
-      print "Heavy JavaScript interrupted!"
+      self.logger.info("Heavy JavaScript interrupted!")
       self.javascriptInterrupted.emit()
     timer.timeout.connect(handleTimeout)
     timer.setSingleShot(True)
@@ -1161,7 +1189,7 @@ class WebKitPage(QWebPage):
     timer.stop()
     result = self.toPythonValue(result)
     for log in result[u'logs']:
-      print u'JavaScript Log: ' + log
+      self.logger.info(u'JavaScript Log: ' + log)
     if result.has_key(u'error') and result[u'timeouted']:
       raise WebKitJavaScriptTimeoutException(result[u'error'])
     if result.has_key(u'error') and not result[u'timeouted']:
@@ -1170,6 +1198,7 @@ class WebKitPage(QWebPage):
       raise Exception(u'Timeout and JavaScript success is occurred both. This is bug.')
     if not result.has_key(u'data'):
       raise Exception(u'JavaScript result dosen\'t have data. This is bug.')
+
 
     return result[u'data']
 
@@ -1232,7 +1261,7 @@ class WebKitPage(QWebPage):
 
   def extension(self, extension, option, output):
     if (extension == QWebPage.ErrorPageExtension):
-      print u'Page error has ocurred!'
+      self.logger.warning(u'Page error has ocurred!')
     return True
   
 
