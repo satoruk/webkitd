@@ -3,12 +3,17 @@
 from __future__ import with_statement
 
 from pprint import pprint as p
-import signal, json, sys, os, re, traceback, uuid, json, time, errno, logging, codecs
+import signal, sys, os, re, traceback, uuid, json, time, errno, logging, codecs, select, base64
+
+from SocketServer import (ForkingTCPServer, BaseRequestHandler)
 
 from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 from PyQt4.QtWebKit import *
 from PyQt4.QtNetwork import *
+
+
+__version__ = '0.0.3'
 
 
 sys.stdin  = codecs.getreader('utf-8')(sys.stdin)
@@ -19,7 +24,7 @@ logger.setLevel(logging.DEBUG)
 
 conerr = logging.StreamHandler(sys.stderr)
 conerr.setLevel(logging.WARNING)
-conerr_formatter = logging.Formatter('%(levelname)s %(message)s')
+conerr_formatter = logging.Formatter('%(asctime)s pid:%(process)d tid:%(thread)d [%(levelname)s] %(message)s at %(module)s line:%(lineno)d')
 conerr.setFormatter(conerr_formatter)
 logger.addHandler(conerr)
 
@@ -30,7 +35,38 @@ console.setFormatter(console_formatter)
 logger.addHandler(console)
 
 
-class WebKitServer(QTcpServer):
+class WebKitRequestHandler(BaseRequestHandler):
+
+
+  def __init__(self, request, client_address, server):
+    self.logger = logging.getLogger('webkitd.WebKitRequestHandler')
+    BaseRequestHandler.__init__(self, request, client_address, server)
+
+
+  def handle(self):
+    self.logger.info('new connection')
+
+    app = QApplication([])
+    app.setApplicationName(QString(u'WebKitServer'))
+    app.setApplicationVersion(QString(__version__))
+
+    socketDescriptor =  self.request.fileno()
+    self.logger.debug('socketDescriptor:{0}'.format(socketDescriptor))
+
+    socket = QTcpSocket(app)
+    socket.setSocketDescriptor(socketDescriptor)
+    worker = WebKitServer.Worker(socket, app, WebKitServer.Page)
+    self.logger.debug('started worker!')
+    app.exec_()
+    self.logger.debug('app was exec')
+
+
+  def finish(self):
+    self.logger.debug('request close!')
+
+
+
+class WebKitServer(ForkingTCPServer):
 
 
   @classmethod
@@ -77,16 +113,8 @@ class WebKitServer(QTcpServer):
   @classmethod
   def start(cls, host='127.0.0.1', port=1982):
     cls.init()
-    app = QApplication([])
-    app.setApplicationName(QString(u'WebKitServer'))
-    app.setApplicationVersion(QString(u'0.0.1'))
-    cls.app = app
-    server = cls(app)
-
-    if not server.listen(QHostAddress(host), port):
-      raise Exception(u'Cannot listen!')
-
-    return app.exec_()
+    server = cls((host, port), WebKitRequestHandler)
+    server.serve_forever()
 
 
   @classmethod
@@ -141,24 +169,55 @@ class WebKitServer(QTcpServer):
       raise Exception(u'Unsupported daemon operation.')
 
 
-  def __init__(self, app):
+  def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
     self.logger = logging.getLogger('webkitd.WebKitServer')
-    self.app = app
-    QTcpServer.__init__(self, app)
-    self.newConnection.connect(self.handleNewConnection)
+    self.logger.info('WebKitServer {0}'.format(server_address))
+    ForkingTCPServer.__init__(self, server_address, RequestHandlerClass, bind_and_activate)
+
+    def sigCHLD(num, frame):
+      if num != signal.SIGCHLD: return
+      self.logger.info('caught SIGCHLD {0}'.format(num))
+      self.collect_children()
+    signal.signal(signal.SIGCHLD, sigCHLD)
+    signal.siginterrupt(signal.SIGCHLD, False)
 
 
-  def handleNewConnection(self):
-    while self.hasPendingConnections():
-      socket = self.nextPendingConnection()
-      if socket == None:
-        return
+    def process_request(self, request, client_address):
+       self.logger.info('new connect')
+       try:
+         ForkingTCPServer.process_request(self, request, client_address)
+       except OSError as e:
+         if e.errno == errno.EAGAIN:
+           self.logger.info('BOOBOO')
+           self.logger.warning(str(e))
+           request.sendall(json.dumps({'error': unicode(e.strerror), 'fatal': True, 'disconnect': True }, ensure_ascii=False, encoding=u'UTF-8') + u'\n')
+           request.close()
+         else:
+           raise
 
-      self.logger.info('new connection.')
- 
-      socket.disconnected.connect(socket.deleteLater)
+  def serve_forever(self, poll_interval=0.2):
+    # SocketServer 0.4 doesn't handle syscall interruption
+    # http://bugs.python.org/issue7978
+    self._BaseServer__is_shut_down.clear()
+    try:
+      while not self._BaseServer__shutdown_request:
+        r, w, e = self.__eintr_retry(select.select, [self], [], [], poll_interval)
+        if self in r:
+          self._handle_request_noblock()
+    finally:
+      self._BaseServer__shutdown_request = False
+      self._BaseServer__is_shut_down.set()
 
-      worker = self.__class__.Worker(socket, self.app, self.__class__.Page)
+
+  def __eintr_retry(self, func, *args):
+    """restart a system call interrupted by EINTR"""
+    while True:
+      try:
+        return func(*args)
+      except (OSError, IOError, select.error) as e:
+        if e.args[0] != errno.EINTR:
+          raise
+
 
 
 class WebKitWorker(QObject):
@@ -169,7 +228,7 @@ class WebKitWorker(QObject):
 
   def __init__(self, socket, app, Page):
     self.logger = logging.getLogger('webkitd.WebKitWorker')
-    self.logger.info(u'New worker created: {0} : {1}'.format(unicode(socket.peerAddress().toString()), unicode(socket.peerPort())))
+    self.logger.info('New worker remote={0}:{1}, local={2}:{3}'.format(socket.peerAddress().toString(), socket.peerPort(), socket.localAddress().toString(), socket.localPort()))
     QObject.__init__(self, app)
     self.app = app
     self.Page = Page
@@ -180,6 +239,27 @@ class WebKitWorker(QObject):
     socket.disconnected.connect(self.page.deleteLater)
     socket.disconnected.connect(self.deleteLater)
     socket.readyRead.connect(self.handleReadyRead)
+    socket.stateChanged.connect(self.stateChanged)
+
+
+  def stateChanged(self, socketState):
+    if QAbstractSocket.UnconnectedState==socketState:
+      self.logger.info('UnconnectedState')
+
+      try:
+        self.socket.stateChanged.disconnect(self.stateChanged)
+      except:
+        pass
+
+      try:
+        self.socket.readyRead.disconnect(self.handleReadyRead)
+      except:
+        pass
+
+      self.socket = None
+      self.page.settings().clearMemoryCaches()
+      self.page = None
+      self.app.exit(0)
 
 
   def handleJavaScriptInterrupted(self):
@@ -188,6 +268,7 @@ class WebKitWorker(QObject):
 
   def sendData(self, data):
     self.socket.write((data + u'\n').encode(u'UTF-8'))
+    self.socket.flush()
 
 
   def handleReadyRead(self):
@@ -257,11 +338,8 @@ class WebKitWorker(QObject):
 
   def disconnect(self):
     self.logger.info(u'Worker destroyed.')
-    self.socket.disconnectFromHost()
     self.socket.readyRead.disconnect(self.handleReadyRead)
-    self.page.settings().clearMemoryCaches()
-    self.socket = None
-    self.page = None
+    self.socket.disconnectFromHost()
 
 
   @classmethod
@@ -357,11 +435,13 @@ class WebKitWaitElementJob(WebKitCheckElementJob):
 
 
   def start(self):
+    self.logger.info('start')
     self.startTime = time.time()
     self.check()
 
 
   def check(self):
+    self.logger.info('check')
     try:
       timeout =  self.startTime + self.timeout - time.time()
       if timeout < 0:
@@ -374,11 +454,12 @@ class WebKitWaitElementJob(WebKitCheckElementJob):
 
 
   def callback(self, found, count, timeouted, error):
+    self.logger.info('callback')
     try:
       if (found or error):
         self.worker.finish({ u'found': found, u'count': count, u'error': error, u'timeouted': timeouted})
       else:
-        self.page.timeout(1, self.check)
+        self.page.timeout(0.2, self.check)
     except Exception, e:
       traceback.print_exc();
       self.worker.error(e)
@@ -595,30 +676,20 @@ class WebKitServerJob():
       if (self.data[u'command'] == u'disconnect'):
         self.worker.finish({ u'message': 'bye-bye' })
         self.worker.disconnect()
-      elif (self.data[u'command'] == u'proxy-on'):
-        proxy = QNetworkProxy()
-        proxy.setType(QNetworkProxy.DefaultProxy)
-        proxy.setHostName(self.data[u'hostname'])
-        proxy.setPort(int(self.data[u'port'], 10))
-        self.page.networkAccessManager().setProxy(proxy)
-        self.worker.finish({ u'proxy': 'set proxy-on' })
-      elif (self.data[u'command'] == u'proxy-off'):
-        proxy = QNetworkProxy()
-        proxy.setType(QNetworkProxy.NoProxy)
-        self.page.networkAccessManager().setProxy(proxy)
-        self.worker.finish({ u'proxy': 'set proxy-off' })
+
       elif (self.data[u'command'] == u'to-plain-text'):
         value = unicode(self.page.mainFrame().toPlainText())
-        print value
-        sys.stdout.flush()
         self.worker.finish({ u'to-plain-text': 'to-plain-text', u'value': value })
+
       elif (self.data[u'command'] == u'to-html'):
         value = unicode(self.page.mainFrame().toHtml())
-        print value
-        sys.stdout.flush()
         self.worker.finish({ u'to-html': 'to-html', u'value': value })
+
+      elif (self.data[u'command'] == u'grab'):
+        value = self.grab()
+        self.worker.finish({ u'grab': 'grab', u'value': value })
+
       elif (self.data[u'command'] == u'status'):
-        
         objectCount = WebKitServer.getObjectCount(self.worker.app)
         objectCountMap = WebKitServer.getObjectCountMap(self.worker.app)
 
@@ -634,11 +705,35 @@ class WebKitServerJob():
           u'height': status[u'height'],
           u'selectedText': status[u'selectedText']
         })
+
       else:
         self.worker.finish({ u'error': 'command not found' })
+
     except Exception, e:
       traceback.print_exc();
       self.worker.error(e)
+
+
+  def grab(self):
+    self.logger.info('grab')
+
+    view = self.page.view()
+    #filename = u'/tmp/WebKitd_grab_{0}.png'.format(str(uuid.uuid1()))
+    pixmap = QPixmap.grabWidget(view)
+    #ret = pixmap.save(QString(filename), unicode('png'))
+
+    byteArray = QByteArray()
+    buf = QBuffer(byteArray);
+    buf.open(QIODevice.WriteOnly);
+    ret = pixmap.save(buf, unicode('png'))
+
+    #b64val = base64.encodestring(byteArray)
+    b64val = str(byteArray.toBase64())
+
+    self.logger.info('grab ... {0}'.format(ret))
+    if (ret): return b64val
+    return False
+
 
 
 #
@@ -688,9 +783,9 @@ class WebKitPreferenceJob():
   def setProxy(self, value):
     proxy = QNetworkProxy()
     if value.has_key(u'host'):
-      proxy.setType(QNetworkProxy.DefaultProxy)
+      proxy.setType(QNetworkProxy.HttpProxy)
       proxy.setHostName(value[u'host'])
-      proxy.setPort(int(value[u'port'], 10))
+      proxy.setPort(int(str(value[u'port']), 10))
     else:
       proxy.setType(QNetworkProxy.NoProxy)
     self.page.networkAccessManager().setProxy(proxy)
@@ -719,13 +814,9 @@ class WebKitPage(QWebPage):
       QWebSettings.PrivateBrowsingEnabled: True,
       QWebSettings.DnsPrefetchEnabled: True,
     }
-
     for k, v in settings.items():
       self.settings().setAttribute(k, v)
 
-    # proxy対応（システム設定）
-    ##QNetworkProxyFactory.setUseSystemConfiguration(True)
-    
     self.loadProgress.connect(self.handleLoadProgress)
     self.loadStarted.connect(self.handleLoadStarted)
     self.loadFinished.connect(self.handleLoadFinished)
@@ -739,7 +830,10 @@ class WebKitPage(QWebPage):
     if hasattr(self.mainFrame(), 'pageChanged'):
       self.mainFrame().pageChanged.connect(self.handlePageChanged)
 
-    self.setViewportSize(QSize(400, 300))
+    view = QWebView()
+    view.setPage(self)
+    self.setView(view)
+    view.showFullScreen()
 
 
   def status(self):
@@ -795,29 +889,31 @@ class WebKitPage(QWebPage):
 
 
   def timeout(self, time, callback):
-    self.logger.info(u'Waiting: ' + unicode(time) + u' sec')
+    self.logger.info(u'Waiting: {0} sec'.format(unicode(time)))
     if (self.timer.isUsed):
       raise Exception(u'Timer is used')
     self.timer.isUsed = True
-    self.timer.start(time * 1000)
+    self.timer.start(int(time * 1000))
 
     def handleTimeout():
       self.logger.info(u'Load timeout.')
       self.timer.stop()
       self.timer.timeout.disconnect(handleTimeout)
-      self.timer.isUsed = False
-      callback()
-
+      if (self.timer.isUsed):
+        self.timer.isUsed = False
+        callback()
+ 
     self.timer.timeout.connect(handleTimeout)
 
 
   def cancelTimeout(self):
+    self.logger.info('cancelTimeout')
     self.timer.isUsed = False
-    self.timer.stop()
+    self.timer.timeout.emit()
 
 
   def navigate(self, url, timeout, callback):
-    self.logger.info(u"Preparing to load...: " + url)
+    self.logger.info(u"Preparing to load... url:{0} timeout:{1} ".format(url, timeout))
 
     context = {
       u'status': 0,
@@ -827,34 +923,37 @@ class WebKitPage(QWebPage):
     }
 
     def handleResourceLoadFinished(reply):
+      self.logger.info('handleResourceLoadFinished')
       if (context[u'timeouted']):
         raise Exception(u'Timeout and load finished occurred both. This is bug.')
       if (unicode(self.mainFrame().url().toString()) == unicode(reply.url().toString())):
         context[u'status'] = reply.attribute(QNetworkRequest.HttpStatusCodeAttribute).toInt()[0]
 
     def handleLoadFinished(ok):
+      self.logger.info('handleLoadFinished')
+      time.sleep(3)
+      self.cancelTimeout()
       self.loadFinished.disconnect(handleLoadFinished)
       context[u'nam'].finished.disconnect(handleResourceLoadFinished)
-      self.cancelTimeout()
       context[u'requestArrived'] = True
       if (context[u'timeouted']):
         raise Exception(u'Timeout and load finished occurred both. This is bug.')
       callback(ok, context[u'status'], context[u'timeouted'])
 
     def handleTimeout():
-      self.loadFinished.disconnect(handleLoadFinished)
-      context[u'nam'].finished.disconnect(handleResourceLoadFinished)
+      self.logger.info('handleTimeout')
       self.cancelTimeout()
       context[u'timeouted'] = True
+      context[u'nam'].finished.disconnect(handleResourceLoadFinished)
+      self.loadFinished.disconnect(handleLoadFinished)
       if (context[u'requestArrived']):
         raise Exception(u'Timeout and load finished occurred both. This is bug.')
       callback(False, context[u'status'], context[u'timeouted'])
 
+    context[u'nam'].finished.connect(handleResourceLoadFinished)
+    self.loadFinished.connect(handleLoadFinished)
     self.timeout(timeout, handleTimeout)
     self.mainFrame().load(QUrl(url))
-    self.loadFinished.connect(handleLoadFinished)
-    context[u'nam'].finished.connect(handleResourceLoadFinished)
-
 
   def click(self, xpath, timeout, callback):
     self.logger.info(u'Preparing to click...: ' + xpath)
@@ -1296,7 +1395,8 @@ WebKitWorker.appendJobClass(WebKitEvalStringJob)
 if __name__ == "__main__":
 
   import argparse
-  parser = argparse.ArgumentParser(description=u'Simple WebKit Server')
+  parser = argparse.ArgumentParser(prog='WebKit Server', usage='%(prog)s [options]', description=u'Simple WebKit Server')
+  parser.add_argument('--version', action='version', version='%(prog)s {0}'.format(__version__))
   subparsers = parser.add_subparsers(help='operation')
   startparser = subparsers.add_parser('start', help='Start server')
   startparser.add_argument(u'--host', default='127.0.0.1')
