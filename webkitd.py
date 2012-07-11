@@ -171,8 +171,8 @@ class WebKitServer(ForkingTCPServer):
 
   def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
     self.logger = logging.getLogger('webkitd.WebKitServer')
-    self.logger.info('WebKitServer {0}'.format(server_address))
     ForkingTCPServer.__init__(self, server_address, RequestHandlerClass, bind_and_activate)
+    self.logger.info('WebKitServer({0}) max children={1}'.format(server_address, self.max_children))
 
     def sigCHLD(num, frame):
       if num != signal.SIGCHLD: return
@@ -188,7 +188,6 @@ class WebKitServer(ForkingTCPServer):
          ForkingTCPServer.process_request(self, request, client_address)
        except OSError as e:
          if e.errno == errno.EAGAIN:
-           self.logger.info('BOOBOO')
            self.logger.warning(str(e))
            request.sendall(json.dumps({'error': unicode(e.strerror), 'fatal': True, 'disconnect': True }, ensure_ascii=False, encoding=u'UTF-8') + u'\n')
            request.close()
@@ -885,8 +884,14 @@ class WebKitPage(QWebPage):
 
 
   def handleResourceLoadFinished(self, reply):
-    self.logger.info(u'Resource loaded: ' + unicode(reply.url().toString()))
-
+    msg = u'Resource loaded: {0}, reply.error:{1}'.format(reply.url().toString(), reply.error())
+    err = reply.error()
+    if ( err == QNetworkReply.NoError ):
+      self.logger.info(msg + u' NoError')
+    elif ( err == QNetworkReply.OperationCanceledError ):
+      self.logger.info(msg + u' OperationCanceledError')
+    else:
+      self.logger.warning(msg)
 
   def timeout(self, time, callback):
     self.logger.info(u'Waiting: {0} sec'.format(unicode(time)))
@@ -1354,6 +1359,7 @@ class WebKitPage(QWebPage):
       return super(self.__class__, self).userAgentForUrl(url)
     return self.userAgent
 
+
   def supportsExtension(self, extension):
     return extension == QWebPage.ErrorPageExtension
 
@@ -1362,7 +1368,7 @@ class WebKitPage(QWebPage):
     if (extension == QWebPage.ErrorPageExtension):
       self.logger.warning(u'Page error has ocurred!')
     return True
-  
+
 
 
 class WebKitProtocolViolationException(Exception):
