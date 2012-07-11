@@ -936,7 +936,6 @@ class WebKitPage(QWebPage):
 
     def handleLoadFinished(ok):
       self.logger.info('handleLoadFinished')
-      time.sleep(3)
       self.cancelTimeout()
       self.loadFinished.disconnect(handleLoadFinished)
       context[u'nam'].finished.disconnect(handleResourceLoadFinished)
