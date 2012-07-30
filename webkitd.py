@@ -13,7 +13,7 @@ from PyQt4.QtWebKit import *
 from PyQt4.QtNetwork import *
 
 
-__version__ = '0.0.3'
+__version__ = '0.0.4'
 
 
 sys.stdin  = codecs.getreader('utf-8')(sys.stdin)
@@ -795,6 +795,18 @@ class WebKitPage(QWebPage):
 
   javascriptInterrupted = pyqtSignal()
 
+  ignoreNetowrkReplys = (
+    QNetworkReply.NoError,
+    QNetworkReply.AuthenticationRequiredError,       # 401 Authorization required
+    QNetworkReply.ContentOperationNotPermittedError, # 403 Access denied
+    QNetworkReply.ContentNotFoundError,              # 404 Not Found
+    QNetworkReply.ContentOperationNotPermittedError, # 405 Method Not Allowed
+    QNetworkReply.ProxyAuthenticationRequiredError,  # 407 Proxy Authentication Required
+    QNetworkReply.ProtocolUnknownError,              # 5xx
+    QNetworkReply.UnknownContentError,               # 4xx
+  )
+
+
   def __init__(self, parent):
     self.logger = logging.getLogger('webkitd.WebKitPage')
     QWebPage.__init__(self, parent)
@@ -882,13 +894,12 @@ class WebKitPage(QWebPage):
   def handleLoadFinished(self, ok):
     self.logger.info(u'Load finished.')
 
-
   def handleResourceLoadFinished(self, reply):
-    msg = u'Resource loaded: {0}, reply.error:{1}'.format(reply.url().toString(), reply.error())
     err = reply.error()
-    if ( err == QNetworkReply.NoError ):
-      self.logger.info(msg + u' NoError')
-    elif ( err == QNetworkReply.OperationCanceledError ):
+    if ( err in self.ignoreNetowrkReplys ):
+      return
+    msg = u'Resource loaded: {0}, reply.error:{1}'.format(reply.url().toString(), reply.error())
+    if ( err == QNetworkReply.OperationCanceledError ):
       self.logger.info(msg + u' OperationCanceledError')
     else:
       self.logger.warning(msg)
