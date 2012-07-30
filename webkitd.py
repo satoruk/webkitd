@@ -111,8 +111,9 @@ class WebKitServer(ForkingTCPServer):
 
 
   @classmethod
-  def start(cls, host='127.0.0.1', port=1982):
+  def start(cls, host='127.0.0.1', port=1982, maxclients=40):
     cls.init()
+    cls.max_children = int(maxclients)
     server = cls((host, port), WebKitRequestHandler)
     server.serve_forever()
 
@@ -1420,6 +1421,7 @@ if __name__ == "__main__":
   startparser.add_argument(u'--pidfile', default='/tmp/webkitd.pid')
   startparser.add_argument(u'--stdout', default='/tmp/webkitd.out')
   startparser.add_argument(u'--stderr', default='/tmp/webkitd.err')
+  startparser.add_argument(u'--maxclients', default=40)
   startparser.add_argument(u'foreground')
   stopparser = subparsers.add_parser('stop', help='Stop server')
   stopparser.add_argument(u'--host', default='127.0.0.1')
@@ -1432,7 +1434,7 @@ if __name__ == "__main__":
 
   if sys.argv[1] == 'start':
     if args.foreground == 'foreground':
-      WebKitServer.start(args.host, args.port)
+      WebKitServer.start(host=args.host, port=args.port, maxclients=args.maxclients)
     else:
       WebKitServer.daemon(sys.argv[1], args.host, args.port, args.pidfile, args.stdout, args.stderr)
   else:
