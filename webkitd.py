@@ -1095,17 +1095,17 @@ class WebKitPage(QWebPage):
       function(xpath, attr) {
         var elList = __xpath__(xpath);
         var el = elList[0];
+        var hasProp = false;
+        var propValue = void(0);
+        var hasAttr = false;
+        var attrValue = void(0);
         if (el) {
-          var hasProp = attr in el;
-          var propValue = el[attr];
-          var hasAttr =  el.hasAttribute(attr);
-          var attrValue = el.getAttribute(attr);
-        }
-        else {
-          var hasProp = false;
-          var propValue = void(0);
-          var hasAttr = false;
-          var attrValue = void(0);
+          hasProp = attr in el;
+          propValue = el[attr];
+          if ('hasAttribute' in el) {
+            hasAttr = el.hasAttribute(attr);
+            attrValue = el.getAttribute(attr);
+          }
         }
         return [!!elList.length, elList.length, hasProp, propValue, hasAttr, attrValue]
       }
