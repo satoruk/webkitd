@@ -34,6 +34,23 @@ console_formatter = logging.Formatter('%(asctime)s pid:%(process)d tid:%(thread)
 console.setFormatter(console_formatter)
 logger.addHandler(console)
 
+# QtLogger
+qtLogger = logging.getLogger('webkitd.QtLogger')
+qtLoggerLevelMap = {
+  QtDebugMsg    : logging.DEBUG,
+  QtWarningMsg  : logging.WARNING,
+  QtCriticalMsg : logging.CRITICAL,
+  QtFatalMsg    : logging.CRITICAL,
+  QtSystemMsg   : logging.INFO
+}
+def qtMsgHandler(type, msg):
+  # it's maybe a bug so ignored.
+  if ( type == QtWarningMsg and  msg == 'QFont::setPixelSize: Pixel size <= 0 (0)' ):
+    return
+  if ( type == QtDebugMsg and  msg.startswith('"Warning: You do not seem to have the package gstreamer0.10-plugins-good installed.') ):
+    return
+  qtLogger.log(qtLoggerLevelMap[type], msg);
+qInstallMsgHandler(qtMsgHandler)
 
 class WebKitRequestHandler(BaseRequestHandler):
 
@@ -805,6 +822,7 @@ class WebKitPage(QWebPage):
     QNetworkReply.ProxyAuthenticationRequiredError,  # 407 Proxy Authentication Required
     QNetworkReply.ProtocolUnknownError,              # 5xx
     QNetworkReply.UnknownContentError,               # 4xx
+    QNetworkReply.ProtocolFailure,                   # 400-xxx
   )
 
 
@@ -1376,8 +1394,8 @@ class WebKitPage(QWebPage):
 
 
   def extension(self, extension, option, output):
-    if (extension == QWebPage.ErrorPageExtension):
-      self.logger.warning(u'Page error has ocurred!')
+    #if (extension == QWebPage.ErrorPageExtension):
+    #  self.logger.warning(u'Page error has occurred!')
     return True
 
 
