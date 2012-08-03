@@ -62,20 +62,22 @@ class WebKitRequestHandler(BaseRequestHandler):
 
   def handle(self):
     self.logger.info('new connection')
+    try:
+      app = QApplication([])
+      app.setApplicationName(QString(u'WebKitServer'))
+      app.setApplicationVersion(QString(__version__))
 
-    app = QApplication([])
-    app.setApplicationName(QString(u'WebKitServer'))
-    app.setApplicationVersion(QString(__version__))
+      socketDescriptor =  self.request.fileno()
+      self.logger.debug('socketDescriptor:{0}'.format(socketDescriptor))
 
-    socketDescriptor =  self.request.fileno()
-    self.logger.debug('socketDescriptor:{0}'.format(socketDescriptor))
-
-    socket = QTcpSocket(app)
-    socket.setSocketDescriptor(socketDescriptor)
-    worker = WebKitServer.Worker(socket, app, WebKitServer.Page)
-    self.logger.debug('started worker!')
-    app.exec_()
-    self.logger.debug('app was exec')
+      socket = QTcpSocket(app)
+      socket.setSocketDescriptor(socketDescriptor)
+      worker = WebKitServer.Worker(socket, app, WebKitServer.Page)
+      self.logger.debug('started worker!')
+      app.exec_()
+      self.logger.debug('app was exec')
+    except Exception, e:
+      self.logger.exception(e)
 
 
   def finish(self):
@@ -200,17 +202,17 @@ class WebKitServer(ForkingTCPServer):
     signal.siginterrupt(signal.SIGCHLD, False)
 
 
-    def process_request(self, request, client_address):
-       self.logger.info('new connect')
-       try:
-         ForkingTCPServer.process_request(self, request, client_address)
-       except OSError as e:
-         if e.errno == errno.EAGAIN:
-           self.logger.warning(str(e))
-           request.sendall(json.dumps({'error': unicode(e.strerror), 'fatal': True, 'disconnect': True }, ensure_ascii=False, encoding=u'UTF-8') + u'\n')
-           request.close()
-         else:
-           raise
+  def process_request(self, request, client_address):
+     self.logger.info('new connect')
+     try:
+       ForkingTCPServer.process_request(self, request, client_address)
+     except OSError as e:
+       if e.errno == errno.EAGAIN:
+         self.logger.warning(str(e))
+         request.sendall(json.dumps({'error': unicode(e.strerror), 'fatal': True, 'disconnect': True }, ensure_ascii=False, encoding=u'UTF-8') + u'\n')
+         request.close()
+       else:
+         raise
 
   def serve_forever(self, poll_interval=0.2):
     # SocketServer 0.4 doesn't handle syscall interruption
