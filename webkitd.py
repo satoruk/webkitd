@@ -194,12 +194,12 @@ class WebKitServer(ForkingTCPServer):
     ForkingTCPServer.__init__(self, server_address, RequestHandlerClass, bind_and_activate)
     self.logger.info('WebKitServer({0}) max children={1}'.format(server_address, self.max_children))
 
-    def sigCHLD(num, frame):
-      if num != signal.SIGCHLD: return
-      self.logger.info('caught SIGCHLD {0}'.format(num))
-      self.collect_children()
-    signal.signal(signal.SIGCHLD, sigCHLD)
-    signal.siginterrupt(signal.SIGCHLD, False)
+    #def sigCHLD(num, frame):
+    #  if num != signal.SIGCHLD: return
+    #  self.logger.info('caught SIGCHLD {0}'.format(num))
+    #  self.collect_children()
+    #signal.signal(signal.SIGCHLD, sigCHLD)
+    #signal.siginterrupt(signal.SIGCHLD, False)
 
 
   def process_request(self, request, client_address):
