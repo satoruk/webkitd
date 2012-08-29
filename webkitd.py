@@ -11,6 +11,7 @@ from PyQt4.QtCore import *
 from PyQt4.QtGui import *
 from PyQt4.QtWebKit import *
 from PyQt4.QtNetwork import *
+from PyQt4.pyqtconfig import Configuration
 
 
 __version__ = '0.0.4'
@@ -192,7 +193,15 @@ class WebKitServer(ForkingTCPServer):
   def __init__(self, server_address, RequestHandlerClass, bind_and_activate=True):
     self.logger = logging.getLogger('webkitd.WebKitServer')
     ForkingTCPServer.__init__(self, server_address, RequestHandlerClass, bind_and_activate)
-    self.logger.info('WebKitServer({0}) max children={1}'.format(server_address, self.max_children))
+
+    cfg = Configuration()
+    self.logger.info('WebKitServer({0}) versions {1}(Qt:{2}, SIP:{3}, PyQt:{4}) max children={5}'.format(
+      server_address,
+      __version__,
+      QT_VERSION_STR,
+      cfg.sip_version_str,
+      cfg.pyqt_version_str,
+      self.max_children))
 
     def sigCHLD(signum, frame):
       if signum != signal.SIGCHLD: return
