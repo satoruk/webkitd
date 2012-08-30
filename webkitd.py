@@ -205,7 +205,6 @@ class WebKitServer(ForkingTCPServer):
 
     def sigCHLD(signum, frame):
       if signum != signal.SIGCHLD: return
-      self.logger.info('caught SIGCHLD {0}'.format(signum))
       while True:
         try:
           pid, status = os.waitpid(-1, os.WNOHANG)
@@ -217,7 +216,6 @@ class WebKitServer(ForkingTCPServer):
         except ValueError, e:
           raise ValueError('%s. x=%d and list=%r' % (e.message, pid,
                                                        self.active_children))
-      self.logger.info('active children={0}'.format(len(self.active_children)))
     signal.signal(signal.SIGCHLD, sigCHLD)
     signal.siginterrupt(signal.SIGCHLD, False)
 
